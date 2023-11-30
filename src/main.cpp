@@ -64,7 +64,7 @@ bool BatteryDatabase::apply(const std::string& sql) {
         sqlite3_free(zErrMsg);
         retval = false;
     }
-    return true;
+    return retval;
 }
 
 // given a path, returns the first line of that file if it exists
