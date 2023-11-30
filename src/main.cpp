@@ -82,13 +82,14 @@ bool BatteryDatabase::apply(const std::string& sql) {
  * 2. see if there is a file `present` 
  * 3. and a file `voltage_now`
  * 4. and the value in `present` is `1`
+ * 5. and the type is "Battery"
  */
 [[nodiscard]] std::optional<fs::path> findBatteryDevicePath() {
     fs::path basedir{"/sys/class/power_supply"};
     if (fs::exists(basedir)) {
         for (auto const& dir_entry : std::filesystem::directory_iterator{basedir}) {
-            auto present{readFileValue(dir_entry.path() / "present")};
-            if (present && *present == "1") {
+            if (readFileValue(dir_entry.path() / "present").value_or("x") == "1" && 
+                readFileValue(dir_entry.path() / "type").value_or("x") == "Battery") {
                 auto voltage_now{readFileValue(dir_entry.path() / "voltage_now")};
                 if (voltage_now) 
                     return dir_entry.path();
@@ -106,8 +107,9 @@ int main(int argc, char *argv[])
      * 2. see if there is a file `present` 
      * 3. and a file `voltage_now`
      * 4. and the value in `present` is `1`
-     * 5. read voltage_now, current_now, temp, and capacity
-     * 6. store them with timestamp in the database
+     * 5. and the type is "Battery"
+     * 6. read voltage_now, current_now, temp, and capacity
+     * 7. store them with timestamp in the database
      */
     auto batteryPath{findBatteryDevicePath()};
     if (!batteryPath) {
@@ -128,13 +130,14 @@ int main(int argc, char *argv[])
     auto temp{readFileValue(*batteryPath / "temp").value_or("0.0")};
     auto status{readFileValue(*batteryPath / "status").value_or("Unknown")};
 
-    std::stringstream sql{"INSERT INTO battery VALUES ( CURRENT_TIMESTAMP"};
-    sql << ", " << voltage
+    std::stringstream sql{};
+    sql << "INSERT INTO battery VALUES ( CURRENT_TIMESTAMP"
+        << ", " << voltage
         << ", " << current
         << ", " << capacity
         << ", " << temp
-        << ", " << status
-        << ", " << batteryPath->string()
-        << " )";
+        << ", \"" << status
+        << "\", \"" << batteryPath->string()
+        << "\" )";
     db.apply(sql.str());
 }
