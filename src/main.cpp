@@ -39,6 +39,7 @@ public:
     BatteryDatabase(const std::string& filename);
     ~BatteryDatabase();
     bool apply(const std::string& sql);
+    bool apply(const std::string_view sql);
 private:
     sqlite3 *db;
 };
@@ -47,12 +48,24 @@ BatteryDatabase::BatteryDatabase(const std::string& filename) {
     int rc = sqlite3_open(filename.c_str(), &db);
     if (rc) {
         sqlite3_close(db);
-        throw(std::runtime_error(sqlite3_errmsg(db))); 
+        throw(std::runtime_error(sqlite3_errmsg(db)));
     }
 }
 
 BatteryDatabase::~BatteryDatabase() {
     sqlite3_close(db);
+}
+
+bool BatteryDatabase::apply(const std::string_view sql) {
+    char *zErrMsg{nullptr};
+    int rc = sqlite3_exec(db, sql.data(), callback, 0, &zErrMsg);
+    bool retval{true};  // be optimistic
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << zErrMsg << '\n';
+        sqlite3_free(zErrMsg);
+        retval = false;
+    }
+    return retval;
 }
 
 bool BatteryDatabase::apply(const std::string& sql) {
@@ -77,21 +90,32 @@ bool BatteryDatabase::apply(const std::string& sql) {
     return {};
 }
 
+class BatteryReader {
+public:
+    BatteryReader();
+    static constexpr std::string_view create_string{R"(CREATE TABLE "battery" ( "time" datetime, "voltage" REAL, "current" REAL, "capacity" REAL, "temp" REAL, "status" STRING, "path" STRING ) )"};
+    [[nodiscard]] std::string getSQL();
+private:
+    [[nodiscard]] std::optional<fs::path> findBatteryDevicePath();
+    fs::path batteryPath;
+};
+
 /*
  * 1. for each dir under /sys/class/power_supply
- * 2. see if there is a file `present` 
+ * 2. if there is a file `present`
  * 3. and a file `voltage_now`
  * 4. and the value in `present` is `1`
  * 5. and the type is "Battery"
+ * 6. then return the path
  */
-[[nodiscard]] std::optional<fs::path> findBatteryDevicePath() {
+[[nodiscard]] std::optional<fs::path> BatteryReader::findBatteryDevicePath() {
     fs::path basedir{"/sys/class/power_supply"};
     if (fs::exists(basedir)) {
         for (auto const& dir_entry : std::filesystem::directory_iterator{basedir}) {
-            if (readFileValue(dir_entry.path() / "present").value_or("x") == "1" && 
+            if (readFileValue(dir_entry.path() / "present").value_or("x") == "1" &&
                 readFileValue(dir_entry.path() / "type").value_or("x") == "Battery") {
                 auto voltage_now{readFileValue(dir_entry.path() / "voltage_now")};
-                if (voltage_now) 
+                if (voltage_now)
                     return dir_entry.path();
             }
         }
@@ -99,36 +123,23 @@ bool BatteryDatabase::apply(const std::string& sql) {
     return {};
 }
 
-
-int main(int argc, char *argv[])
-{
+BatteryReader::BatteryReader() {
     /*
-     * 1. for each dir under /sys/class/power_supply
-     * 2. see if there is a file `present` 
-     * 3. and a file `voltage_now`
-     * 4. and the value in `present` is `1`
-     * 5. and the type is "Battery"
-     * 6. read voltage_now, current_now, temp, and capacity
-     * 7. store them with timestamp in the database
+     * Create a BatteryReader or throw if no battery detected
      */
-    auto batteryPath{findBatteryDevicePath()};
-    if (!batteryPath) {
-        std::cerr << "Did not find battery\n";
-        return 1;
+    auto bp{findBatteryDevicePath()};
+    if (!bp) {
+        throw std::runtime_error{"Did not find battery"};
     }
+    batteryPath = *bp;
+}
 
-    fs::path dbfilename{"/home/ceres/battery.db"};
-    bool create{!fs::exists(dbfilename)};
-    BatteryDatabase db{dbfilename};
-    if (create) {
-        db.apply(R"(CREATE TABLE "battery" ( "time" datetime, "voltage" REAL, "current" REAL, "capacity" REAL, "temp" REAL, "status" STRING, "path" STRING ) )");
-    } 
-
-    auto voltage{readFileValue(*batteryPath / "voltage_now").value_or("0.0")};
-    auto current{readFileValue(*batteryPath / "current_now").value_or("0.0")};
-    auto capacity{readFileValue(*batteryPath / "capacity").value_or("0.0")};
-    auto temp{readFileValue(*batteryPath / "temp").value_or("0.0")};
-    auto status{readFileValue(*batteryPath / "status").value_or("Unknown")};
+[[nodiscard]] std::string BatteryReader::getSQL() {
+    auto voltage{readFileValue(batteryPath / "voltage_now").value_or("0.0")};
+    auto current{readFileValue(batteryPath / "current_now").value_or("0.0")};
+    auto capacity{readFileValue(batteryPath / "capacity").value_or("0.0")};
+    auto temp{readFileValue(batteryPath / "temp").value_or("0.0")};
+    auto status{readFileValue(batteryPath / "status").value_or("Unknown")};
 
     std::stringstream sql{};
     sql << "INSERT INTO battery VALUES ( CURRENT_TIMESTAMP"
@@ -137,7 +148,25 @@ int main(int argc, char *argv[])
         << ", " << capacity
         << ", " << temp
         << ", \"" << status
-        << "\", \"" << batteryPath->string()
+        << "\", \"" << batteryPath.string()
         << "\" )";
-    db.apply(sql.str());
+    return sql.str();
+}
+
+int main(int argc, char *argv[])
+{
+    try {
+        BatteryReader batt;
+        fs::path dbfilename{"/home/ceres/battery.db"};
+        bool create{!fs::exists(dbfilename)};
+        BatteryDatabase db{dbfilename};
+        if (create) {
+            db.apply(batt.create_string);
+        }
+        db.apply(batt.getSQL());
+    }
+    catch (std::runtime_error &err) {
+        std::cerr << err.what() << '\n';
+        return 1;
+    }
 }
