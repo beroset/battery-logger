@@ -14,27 +14,20 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-
-#include "BatteryReader.h"
-#include "BatteryDatabase.h"
+#ifndef BATTERYREADER_H
+#define BATTERYREADER_H
 #include <filesystem>
-#include <iostream>
+#include <optional>
+#include <string>
+#include <string_view>
 
-int main(int argc, char *argv[])
-{
-    namespace fs = std::filesystem;
-    try {
-        BatteryReader batt;
-        fs::path dbfilename{"/home/ceres/battery.db"};
-        bool create{!fs::exists(dbfilename)};
-        BatteryDatabase db{dbfilename};
-        if (create) {
-            db.apply(batt.create_string);
-        }
-        db.apply(batt.getSQL());
-    }
-    catch (std::runtime_error &err) {
-        std::cerr << err.what() << '\n';
-        return 1;
-    }
-}
+class BatteryReader {
+public:
+    BatteryReader();
+    static constexpr std::string_view create_string{R"(CREATE TABLE "battery" ( "time" datetime, "voltage" REAL, "current" REAL, "capacity" REAL, "temp" REAL, "status" STRING, "path" STRING ) )"};
+    [[nodiscard]] std::string getSQL();
+private:
+    [[nodiscard]] std::optional<std::filesystem::path> findBatteryDevicePath();
+    std::filesystem::path batteryPath;
+};
+#endif // BATTERYREADER_H

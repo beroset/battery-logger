@@ -14,27 +14,19 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
+#ifndef BATTERYDATABASE_H
+#define BATTERYDATABASE_H
+#include <string>
+#include <string_view>
+#include <sqlite3.h>
 
-#include "BatteryReader.h"
-#include "BatteryDatabase.h"
-#include <filesystem>
-#include <iostream>
-
-int main(int argc, char *argv[])
-{
-    namespace fs = std::filesystem;
-    try {
-        BatteryReader batt;
-        fs::path dbfilename{"/home/ceres/battery.db"};
-        bool create{!fs::exists(dbfilename)};
-        BatteryDatabase db{dbfilename};
-        if (create) {
-            db.apply(batt.create_string);
-        }
-        db.apply(batt.getSQL());
-    }
-    catch (std::runtime_error &err) {
-        std::cerr << err.what() << '\n';
-        return 1;
-    }
-}
+class BatteryDatabase {
+public:
+    BatteryDatabase(const std::string& filename);
+    ~BatteryDatabase();
+    bool apply(const std::string& sql);
+    bool apply(const std::string_view sql);
+private:
+    sqlite3 *db;
+};
+#endif // BATTERYDATABASE_H
